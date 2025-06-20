@@ -64,9 +64,11 @@ fi
 print_info "Installing all declared software from the Brewfile..."
 brew bundle install --file=- <<EOF
 # --- Casks (GUI Applications) ---
+cask "alt-tab"
 cask "android-platform-tools"
 cask "anythingllm"
 cask "applepi-baker"
+cask "bitwarden"
 cask "brave-browser"
 cask "bruno"
 cask "docker"
@@ -82,6 +84,7 @@ cask "jordanbaird-ice"
 cask "lulu"
 cask "macfuse"
 cask "notesnook"
+cask "nordvpn"
 cask "ollama"
 cask "openmtp"
 cask "paintbrush"
@@ -303,9 +306,9 @@ if [ "$BW_LOGIN_REQUIRED" = true ]; then
                 read -p "Press [Enter] to begin App Store installation..."
             fi
             
-            print_info "Installing App Store apps: Bitwarden, NordVPN, and Outlook..."
-            mas install 1352778147 # Bitwarden
-            mas install 905953485  # NordVPN
+            print_info "Installing App Store app: Outlook..."
+            # mas install 1352778147 # Bitwarden
+            # mas install 905953485  # NordVPN
             mas install 985367838  # Microsoft Outlook
             print_success "App Store apps installation process complete."
         fi
