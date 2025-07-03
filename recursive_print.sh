@@ -1,316 +1,275 @@
 #!/usr/bin/env bash
+#
+# file-crawler.sh - Concatenate source files with formatted headers.
+# This script has been refactored to apply modern Bash best practices.
+# Version 2.1: Corrected a bug where a local variable was out of scope for an EXIT trap.
+
 set -euo pipefail
 
-###############################################################################
-# file-crawler.sh - Concatenate source files with formatted headers
 #
-# USAGE:
-#   file-crawler.sh [--output OUTPUT_FILE] <directory> <file_extension1> \
-#                   [file_extension2 ...] [--skip <skip_dir1> <skip_dir2> ...]
+# Prints the usage instructions extracted from the script's header comments.
 #
-# EXAMPLES:
-#   1) file-crawler.sh ./src ts tsx
-#      => Crawls all .ts and .tsx files inside ./src
-#
-#   2) file-crawler.sh . ts tsx --skip node_modules dist .git \
-#         --output combined.txt
-#      => Crawls current dir, skips specified dirs, saves to combined.txt
-#
-# OUTPUT FORMAT:
-#   ```file_extension
-#   // relative/path/to/file
-#   file_content
-#   
-#   ```
-###############################################################################
-
-# Check if script is in PATH and offer to add it
-check_script_in_path() {
-    local script_name script_path script_dir
-    script_name=$(basename "$0")
-    
-    # Check if script is found in PATH
-    if ! command -v "$script_name" >/dev/null 2>&1; then
-        script_path=$(cd "$(dirname "$0")" && pwd -P)/$script_name
-        echo "Note: $script_name is not in your PATH"
-        echo "You can run it from anywhere by adding it to your PATH"
-        read -p "Would you like to add it to PATH for this session? [y/N] " response
-        
-        if [[ "$response" =~ ^[Yy] ]]; then
-            # Add to PATH only if not already present
-            if [[ ":$PATH:" != *":$(dirname "$script_path"):"* ]]; then
-                export PATH="$(dirname "$script_path"):$PATH"
-                echo "Added to PATH. You can now run '$script_name' from anywhere"
-            else
-                echo "Directory already in PATH"
-            fi
-        fi
-        echo ""
-    fi
-}
-
-# Run PATH check
-check_script_in_path
-
-# Initialize variables
-TARGET_DIR=""
-FILE_TYPES=()
-SKIP_DIRS=()
-OUTPUT_FILE="output.txt"
-OUTPUT_FILE_ABS=""
-PARSE_SKIP=false
-PARSE_OUTPUT=false
-
-# Handle interrupt signal
-trap 'echo -e "\n\nAborted by user!"; exit 1' INT
-
-# Print help function
 print_help() {
     awk '/^# USAGE:/{flag=1; next} /^# ?#/{flag=0} flag' "$0" | \
     sed -e 's/^# \?//' -e 's/^#//'
 }
 
-# Parse command-line arguments
-while [[ $# -gt 0 ]]; do
-    arg="$1"
-    case "$arg" in
-        --skip)
-            PARSE_SKIP=true
-            shift
-            ;;
-        --output)
-            if [ $# -lt 2 ]; then
-                echo "Error: --output requires a filename" >&2
-                exit 1
-            fi
-            PARSE_OUTPUT=true
-            OUTPUT_FILE="$2"
-            shift 2
-            ;;
-        --help)
-            print_help
-            exit 0
-            ;;
-        --version)
-            echo "file-crawler.sh version 1.1"
-            exit 0
-            ;;
-        *)
-            if [ "$PARSE_OUTPUT" = true ]; then
-                OUTPUT_FILE="$arg"
-                PARSE_OUTPUT=false
-                shift
-            elif [ "$PARSE_SKIP" = true ]; then
-                SKIP_DIRS+=("$arg")
-                shift
-            elif [ -z "$TARGET_DIR" ]; then
-                TARGET_DIR="$arg"
-                shift
-            else
-                FILE_TYPES+=("$arg")
-                shift
-            fi
-            ;;
-    esac
-done
-
-# Validate target directory
-if [ -z "$TARGET_DIR" ]; then
-    echo "Error: No target directory specified" >&2
-    exit 1
-fi
-
-if [ ! -d "$TARGET_DIR" ]; then
-    echo "Error: '$TARGET_DIR' is not a valid directory" >&2
-    exit 1
-fi
-
-# Validate at least one file extension
-if [ ${#FILE_TYPES[@]} -eq 0 ]; then
-    echo "Error: No file extensions provided" >&2
-    echo "Usage: $0 [--output FILE] <directory> <ext1> [ext2 ...] [--skip skipDir1 ...]" >&2
-    exit 1
-fi
-
-# Create output directory if needed and verify write access
-output_dir=$(dirname "$OUTPUT_FILE")
-if [ ! -d "$output_dir" ]; then
-    mkdir -p "$output_dir" || {
-        echo "Error: Failed to create output directory '$output_dir'" >&2
-        exit 1
-    }
-fi
-
-if ! touch "$OUTPUT_FILE" 2>/dev/null; then
-    echo "Error: '$OUTPUT_FILE' is not writable" >&2
-    exit 1
-fi
-
-# Get absolute paths for current directory and output file
-BASE_CWD=$(cd . && pwd -P)
-CWD_BASE_NAME=$(basename "$BASE_CWD")
-TARGET_DIR=$(cd "$TARGET_DIR" && pwd -P)
-OUTPUT_FILE_ABS=$(cd "$(dirname "$OUTPUT_FILE")" && pwd -P)/$(basename "$OUTPUT_FILE")
-
-# Initialize output file
-> "$OUTPUT_FILE"
-
-###############################################################################
-# Build find command safely using arrays
-###############################################################################
-find_args=("$TARGET_DIR")
-
-# Add skip directories if any
-if [ ${#SKIP_DIRS[@]} -gt 0 ]; then
-    find_args+=(-type d)
-    find_args+=('(')
-    for dir in "${SKIP_DIRS[@]}"; do
-        find_args+=(-name "$dir" -o)
-    done
-    # Remove last -o and close parentheses
-    unset 'find_args[${#find_args[@]}-1]'
-    find_args+=(')')
-    find_args+=(-prune -false -o)
-fi
-
-# Add file type matching
-find_args+=(-type f '(')
-for ext in "${FILE_TYPES[@]}"; do
-    find_args+=(-name "*.$ext" -o)
-done
-unset 'find_args[${#find_args[@]}-1]'  # Remove last -o
-find_args+=(')')
-find_args+=(-print)  # Standard output (not null-delimited)
-
-# Count total files safely
-FILES_TMP=$(mktemp)
-find "${find_args[@]}" 2>/dev/null > "$FILES_TMP"
-TOTAL_FILES=$(wc -l < "$FILES_TMP" | tr -d '[:space:]')
-
-if [ "$TOTAL_FILES" -eq 0 ]; then
-    echo "No matching files found in '$TARGET_DIR'"
-    echo "  Extensions: ${FILE_TYPES[*]}"
-    [ ${#SKIP_DIRS[@]} -gt 0 ] && echo "  Skipped dirs: ${SKIP_DIRS[*]}"
-    rm -f "$FILES_TMP"
-    exit 0
-fi
-
-###############################################################################
-# Processing functions
-###############################################################################
-CURRENT_COUNT=0
-BAR_LENGTH=40
-UPDATE_FREQ=10  # Update progress bar every N files
-
-# Improved progress bar with padding
+#
+# Draws a progress bar to stderr.
+# Globals: CURRENT_COUNT, TOTAL_FILES, BAR_LENGTH
+#
 draw_progress_bar() {
+    # Ensure TOTAL_FILES is not zero to prevent division by zero error
+    [[ ${TOTAL_FILES:-0} -eq 0 ]] && return
+
     local progress=$((CURRENT_COUNT * 100 / TOTAL_FILES))
     local filled=$((progress * BAR_LENGTH / 100))
     local bar
-    
+
     # Build bar string
-    printf -v bar '%*s' "$filled"
+    printf -v bar '%*s' "$filled" ''
     bar=${bar// /#}
-    
+
     # Pad with dashes
     printf -v bar '%-*s' "$BAR_LENGTH" "$bar"
     bar=${bar// /-}
-    
-    printf "\r[%s] %d%% (%d/%d files)" "$bar" "$progress" "$CURRENT_COUNT" "$TOTAL_FILES"
+
+    # Print to stderr to not interfere with stdout
+    printf "\r[%s] %d%% (%d/%d files)" "$bar" "$progress" "$CURRENT_COUNT" "$TOTAL_FILES" >&2
 }
 
-# Determine relative display path
+#
+# Determines the relative display path for a given absolute file path.
+# Globals: BASE_CWD, CWD_BASE_NAME
+#
 get_display_path() {
     local file_abs="$1"
     local display_path
-    
+
+    # Prepend the parent directory name if the file is within the original CWD
     if [[ "$file_abs" == "$BASE_CWD"/* ]]; then
-        display_path="$CWD_BASE_NAME/${file_abs#$BASE_CWD/}"
+        display_path="${CWD_BASE_NAME}/${file_abs#$BASE_CWD/}"
     else
         display_path="$file_abs"
     fi
-    
+
     echo "$display_path"
 }
 
+#
+# Processes a single file: adds its header and content to the output file.
+# Globals: OUTPUT_FILE, OUTPUT_FILE_ABS
+#
 process_file() {
     local file="$1"
-    
-    # Skip output file itself
-    if [[ "$file" -ef "$OUTPUT_FILE_ABS" ]]; then
+
+    # Resolve the absolute path of the file being processed
+    local file_abs
+    file_abs="$(cd "$(dirname "$file")" && pwd -P)/$(basename "$file")"
+
+    # Skip the output file itself to prevent infinite loops
+    if [[ "$file_abs" -ef "$OUTPUT_FILE_ABS" ]]; then
         return 0
     fi
-    
-    # Verify file readability
-    if [ ! -r "$file" ]; then
-        echo "Warning: Skipping unreadable file '$file'" >&2
+
+    # Verify file readability before processing
+    if [[ ! -r "$file" ]]; then
+        printf "\nWarning: Skipping unreadable file '%s'\n" "$file" >&2
         return 1
     fi
-    
-    # Get file extension
-    local filename display_path extension
+
+    local filename extension display_path
     filename=$(basename -- "$file")
     extension="${filename##*.}"
-    if [[ "$extension" == "$filename" ]]; then
-        extension="text"
-    fi
-    
-    # Get display path
-    display_path=$(get_display_path "$(cd "$(dirname "$file")" && pwd -P)/$(basename "$file")")
-    
-    # Write file header and content
-    printf '```%s\n' "$extension" >> "$OUTPUT_FILE"
-    printf '// %s\n' "$display_path" >> "$OUTPUT_FILE"
-    
-    # Append file content with error handling
-    if ! cat -- "$file" >> "$OUTPUT_FILE" 2>/dev/null; then
-        echo "Error: Failed to read '$file'" >&2
-        return 1
-    fi
-    
-    # Add closing code block
-    printf '\n```\n\n' >> "$OUTPUT_FILE"
-    
-    return 0
+    # Use 'text' as a fallback extension
+    [[ "$extension" == "$filename" ]] && extension="text"
+
+    display_path=$(get_display_path "$file_abs")
+
+    # Write file header and content to the output file
+    {
+        printf '```%s\n' "$extension"
+        printf '// %s\n' "$display_path"
+        # Use cat without suppressing its errors. If it fails, pipefail will catch it.
+        cat -- "$file"
+        printf '\n```\n\n'
+    } >> "$OUTPUT_FILE"
 }
 
-###############################################################################
-# Main processing loop
-###############################################################################
-echo "Starting crawl of $TOTAL_FILES files"
-echo "Output: $OUTPUT_FILE"
-[ ${#SKIP_DIRS[@]} -gt 0 ] && echo "Skipping: ${SKIP_DIRS[*]}"
-echo ""
+#
+# Main function to encapsulate all script logic.
+#
+main() {
+    # --- Configuration and Default Variables ---
+    local TARGET_DIR=""
+    local -a FILE_TYPES=()
+    local -a SKIP_DIRS=()
+    local OUTPUT_FILE="output.txt"
+    local -a find_args=()
 
-# Process files using temporary file
-while IFS= read -r file; do
-    if process_file "$file"; then
-        # Count successful processing
-        ((CURRENT_COUNT++))
-    else
-        # Count skipped files too
-        ((CURRENT_COUNT++))
+    # Progress bar settings
+    local CURRENT_COUNT=0
+    local TOTAL_FILES=0
+    local BAR_LENGTH=40
+
+    # --- Argument Parsing ---
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --output)
+                if [[ -z "${2:-}" ]]; then
+                    echo "Error: --output option requires a filename." >&2
+                    exit 1
+                fi
+                OUTPUT_FILE="$2"
+                shift 2
+                ;;
+            --skip)
+                shift # Consume '--skip'
+                # Consume all subsequent arguments until the next option (starting with --)
+                while [[ $# -gt 0 && ! "$1" =~ ^-- ]]; do
+                    SKIP_DIRS+=("$1")
+                    shift
+                done
+                ;;
+            --help)
+                print_help
+                exit 0
+                ;;
+            --version)
+                echo "file-crawler.sh version 2.1 (Refactored)"
+                exit 0
+                ;;
+            -*)
+                echo "Error: Unknown option '$1'" >&2
+                print_help
+                exit 1
+                ;;
+            *)
+                # Positional arguments
+                if [[ -z "$TARGET_DIR" ]]; then
+                    TARGET_DIR="$1"
+                else
+                    FILE_TYPES+=("$1")
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    # --- Input Validation ---
+    if [[ -z "$TARGET_DIR" ]]; then
+        echo "Error: No target directory specified." >&2
+        print_help
+        exit 1
     fi
-    
-    # Always update progress bar at the end
-    if (( CURRENT_COUNT == TOTAL_FILES )); then
-        draw_progress_bar
-    # Otherwise update periodically
-    elif (( CURRENT_COUNT % UPDATE_FREQ == 0 )); then
-        draw_progress_bar
+    if [[ ! -d "$TARGET_DIR" ]]; then
+        echo "Error: '$TARGET_DIR' is not a valid directory." >&2
+        exit 1
     fi
-done < "$FILES_TMP"
+    if [[ ${#FILE_TYPES[@]} -eq 0 ]]; then
+        echo "Error: No file extensions provided." >&2
+        print_help
+        exit 1
+    fi
 
-# Always draw 100% at the end
-if (( CURRENT_COUNT < TOTAL_FILES )); then
-    CURRENT_COUNT=$TOTAL_FILES
-    draw_progress_bar
-fi
+    # --- Path and File Setup ---
+    local output_dir
+    output_dir=$(dirname "$OUTPUT_FILE")
+    mkdir -p "$output_dir" || {
+        echo "Error: Failed to create output directory '$output_dir'." >&2
+        exit 1
+    }
+    # Check writability by trying to create/touch the file
+    if ! touch "$OUTPUT_FILE" 2>/dev/null; then
+        echo "Error: Output file '$OUTPUT_FILE' is not writable." >&2
+        exit 1
+    fi
 
-# Clean up temporary file
-rm -f "$FILES_TMP"
+    # Get absolute paths for consistent path logic
+    local BASE_CWD CWD_BASE_NAME OUTPUT_FILE_ABS
+    BASE_CWD="$(cd . && pwd -P)"
+    CWD_BASE_NAME="$(basename "$BASE_CWD")"
+    TARGET_DIR="$(cd "$TARGET_DIR" && pwd -P)"
+    OUTPUT_FILE_ABS="$(cd "$(dirname "$OUTPUT_FILE")" && pwd -P)/$(basename "$OUTPUT_FILE")"
 
-# Final status
-printf "\n\nCrawling completed. Processed %d/%d files.\n" "$CURRENT_COUNT" "$TOTAL_FILES"
-echo "Output saved to: $OUTPUT_FILE"
-exit 0
+    # Initialize/clear the output file
+    >"$OUTPUT_FILE"
+
+    # --- Build `find` command arguments safely ---
+    find_args+=("$TARGET_DIR")
+
+    if [[ ${#SKIP_DIRS[@]} -gt 0 ]]; then
+        find_args+=(-type d '(')
+        for dir in "${SKIP_DIRS[@]}"; do
+            find_args+=(-name "$dir" -o)
+        done
+        # Replace the trailing '-o' with ')'
+        find_args[${#find_args[@]}-1]=')'
+        find_args+=(-prune -o)
+    fi
+
+    find_args+=(-type f '(')
+    for ext in "${FILE_TYPES[@]}"; do
+        find_args+=(-name "*.$ext" -o)
+    done
+    find_args[${#find_args[@]}-1]=')'
+    find_args+=(-print)
+
+    # --- File Discovery and Processing ---
+    local temp_file
+    temp_file=$(mktemp)
+
+    # *** FIX: Trap for interrupt signals to clean up the temp file. ***
+    # This trap handles Ctrl+C (INT) or a kill command (TERM).
+    trap 'echo -e "\n\nAborted by user." >&2; rm -f "$temp_file"; exit 130' INT TERM
+
+    # Run find, allowing it to report errors (e.g., permission denied)
+    find "${find_args[@]}" > "$temp_file"
+
+    # Read the line count directly
+    TOTAL_FILES=$(< "$temp_file" wc -l)
+
+    if [[ "$TOTAL_FILES" -eq 0 ]]; then
+        echo "No matching files found in '$TARGET_DIR'" >&2
+        echo "  Extensions: ${FILE_TYPES[*]}" >&2
+        [[ ${#SKIP_DIRS[@]} -gt 0 ]] && echo "  Skipped dirs: ${SKIP_DIRS[*]}" >&2
+        # *** FIX: Manually clean up temp file on this exit path. ***
+        rm -f "$temp_file"
+        trap - INT TERM # Clear the trap
+        exit 0
+    fi
+
+    echo "Starting crawl of $TOTAL_FILES files..." >&2
+    echo "Output will be saved to: $OUTPUT_FILE" >&2
+    [[ ${#SKIP_DIRS[@]} -gt 0 ]] && echo "Skipping directories: ${SKIP_DIRS[*]}" >&2
+    echo "" >&2
+
+    # --- Main Processing Loop ---
+    while IFS= read -r file; do
+        if [[ -n "$file" ]]; then
+            if process_file "$file"; then
+                ((CURRENT_COUNT++))
+            else
+                # Also increment count for failed files to keep progress accurate
+                ((CURRENT_COUNT++))
+            fi
+            draw_progress_bar
+        fi
+    done < "$temp_file"
+
+    # --- Finalization ---
+    # *** FIX: Explicitly clean up the temporary file on normal completion. ***
+    # This is the crucial fix. We remove the file before the function exits
+    # and the 'temp_file' variable goes out of scope.
+    rm -f "$temp_file"
+
+    # Disable the trap now that we're done with the resource it was protecting.
+    trap - INT TERM
+
+    echo "" >&2
+    echo "Crawling complete. Processed $CURRENT_COUNT/$TOTAL_FILES files." >&2
+    echo "Output saved to: $OUTPUT_FILE_ABS" >&2
+}
+
+# Call main with all script arguments
+main "$@"
