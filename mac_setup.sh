@@ -221,7 +221,7 @@ else
     
     if [ -d "$(goenv root)/versions/${LTS_GO}" ]; then print_warning "Go 'LTS' version ($LTS_GO) is already installed. Skipping."; else print_info "Installing Go 'LTS' ($LTS_GO)..."; goenv install "$LTS_GO"; fi
     if [ -d "$(goenv root)/versions/${LATEST_GO}" ]; then print_warning "Go latest version ($LATEST_GO) is already installed. Skipping."; else print_info "Installing Go latest ($LATEST_GO)..."; goenv install "$LATEST_GO"; fi
-    goenv global "$LTS_GO"
+    goenv global "$LATEST_GO"
 fi
 print_success "Shell and language runtimes are configured."
 
